@@ -15,12 +15,12 @@
 <body>
 <div id="root">Loading…</div>
 
-<!-- React + Babel + Supabase, all as plain global (UMD) scripts. No ES modules,
-     so the in-browser Babel transform never sees an `import` statement. -->
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- React + Babel + Supabase, all as plain global (UMD) scripts from one CDN.
+     No ES modules, so the in-browser Babel transform never sees an `import`. -->
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback } = React;
@@ -49,7 +49,7 @@ const COLORS = {
   green: "#2E7D5B", greenSoft: "#E4F0EA", slate: "#6B7685",
 };
 
-let supabase = null;
+let db = null;
 const configured = !SUPABASE_URL.includes("YOUR-PROJECT") && !SUPABASE_KEY.includes("YOUR-");
 
 const btn = (accent, filled) => ({
@@ -87,8 +87,8 @@ function App() {
   const [batch, setBatch] = useState("All");
 
   const load = useCallback(async () => {
-    if (!supabase) return;
-    const { data: rows, error } = await supabase.from("attendance").select("*");
+    if (!db) return;
+    const { data: rows, error } = await db.from("attendance").select("*");
     if (error) { setStatus("error"); return; }
     const map = {};
     (rows || []).forEach(r => { map[r.seating_id] = { checkedIn: r.checked_in, adults: r.adults, kids: r.kids }; });
@@ -98,21 +98,31 @@ function App() {
 
   useEffect(() => {
     if (!configured) return;
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    load();
-    const channel = supabase
-      .channel("attendance-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    if (!window.supabase || !window.supabase.createClient) {
+      setStatus("error");
+      console.error("Supabase library did not load from the CDN.");
+      return;
+    }
+    try {
+      db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      load();
+      const channel = db
+        .channel("attendance-changes")
+        .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, load)
+        .subscribe();
+      return () => { db.removeChannel(channel); };
+    } catch (e) {
+      console.error(e);
+      setStatus("error");
+    }
   }, [load]);
 
   const rowFor = (id) => data[id] || { checkedIn: false, adults: 0, kids: 0 };
 
   const save = async (id, row) => {
     setData(prev => ({ ...prev, [id]: row }));           // optimistic
-    if (!supabase) return;
-    await supabase.from("attendance").upsert({
+    if (!db) return;
+    await db.from("attendance").upsert({
       seating_id: id, checked_in: row.checkedIn, adults: row.adults, kids: row.kids,
     }, { onConflict: "seating_id" });
   };
@@ -230,7 +240,20 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+function mount() {
+  const rootEl = document.getElementById("root");
+  try {
+    if (!window.React || !window.ReactDOM) {
+      rootEl.textContent = "Could not load React from the CDN. Check your internet connection and refresh.";
+      return;
+    }
+    ReactDOM.createRoot(rootEl).render(<App />);
+  } catch (e) {
+    console.error(e);
+    rootEl.textContent = "Something went wrong starting the app: " + (e && e.message ? e.message : e);
+  }
+}
+mount();
 </script>
 </body>
 </html>
