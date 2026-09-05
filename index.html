@@ -15,17 +15,12 @@
 <body>
 <div id="root">Loading…</div>
 
-<!-- React + Babel via CDN, Supabase as an ESM module -->
+<!-- React + Babel + Supabase, all as plain global (UMD) scripts. No ES modules,
+     so the in-browser Babel transform never sees an `import` statement. -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-<script type="module">
-  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
-  // Expose the client factory to the Babel-compiled script below.
-  window.__createSupabaseClient = createClient;
-  window.dispatchEvent(new Event("supabase-ready"));
-</script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback } = React;
@@ -103,7 +98,7 @@ function App() {
 
   useEffect(() => {
     if (!configured) return;
-    supabase = window.__createSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     load();
     const channel = supabase
       .channel("attendance-changes")
