@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Book Launch — Attendance</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #FBF8F2; color: #1C2A39;
+         font-family: 'Helvetica Neue', Arial, sans-serif; }
+  #root { padding: 28px 20px; }
+  input, button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root">Loading…</div>
+
+<!-- React + Babel via CDN, Supabase as an ESM module -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="module">
+  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+  // Expose the client factory to the Babel-compiled script below.
+  window.__createSupabaseClient = createClient;
+  window.dispatchEvent(new Event("supabase-ready"));
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+/* ─────────────────────────────────────────────────────────────
+   1) PASTE YOUR SUPABASE PROJECT VALUES HERE
+   Project Settings → Data API → Project URL and the publishable (anon) key.
+   ───────────────────────────────────────────────────────────── */
+const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+const SUPABASE_KEY = "YOUR-PUBLISHABLE-ANON-KEY";
+
+/* ─────────────────────────────────────────────────────────────
+   2) YOUR GUEST LIST — edit freely. id must match the DB row's seating_id.
+   ───────────────────────────────────────────────────────────── */
+const GUESTS = [
+  { id: "A-01", author: "Priya Menon",  book: "The Salt Coast",     batch: "Batch 2019" },
+  { id: "A-02", author: "Rahul Iyer",   book: "Midnight Ledgers",   batch: "Batch 2019" },
+  { id: "A-03", author: "Sneha Rao",    book: "Paper Kingdoms",     batch: "Batch 2020" },
+  { id: "B-01", author: "Arjun Nair",   book: "The Quiet Machine",  batch: "Batch 2020" },
+  { id: "B-02", author: "Kavya Reddy",  book: "Under Red Skies",    batch: "Batch 2021" },
+  { id: "B-03", author: "Vikram Sethi", book: "Ashes & Almonds",    batch: "Batch 2021" },
+];
+
+const COLORS = {
+  ink: "#1C2A39", paper: "#FBF8F2", line: "#E4DCCB", gold: "#C9A24B",
+  green: "#2E7D5B", greenSoft: "#E4F0EA", slate: "#6B7685",
+};
+
+let supabase = null;
+const configured = !SUPABASE_URL.includes("YOUR-PROJECT") && !SUPABASE_KEY.includes("YOUR-");
+
+const btn = (accent, filled) => ({
+  width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${accent}`,
+  background: filled ? accent : "transparent", color: filled ? "#fff" : accent,
+  fontSize: 20, lineHeight: 1, cursor: "pointer", fontWeight: 600,
+});
+
+function Stepper({ label, value, onChange, accent }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 118 }}>
+      <span style={{ fontSize: 12, color: COLORS.slate }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button onClick={() => onChange(Math.max(0, value - 1))} style={btn(accent, false)} aria-label={`decrease ${label}`}>−</button>
+        <span style={{ minWidth: 24, textAlign: "center", fontSize: 20, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+        <button onClick={() => onChange(value + 1)} style={btn(accent, true)} aria-label={`increase ${label}`}>+</button>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, big }) {
+  return (
+    <div style={{ border: `1px solid ${COLORS.line}`, background: "#fff", borderRadius: 10, padding: "12px 18px", minWidth: 96 }}>
+      <div style={{ fontSize: 11, letterSpacing: 1, color: COLORS.slate, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontFamily: "Georgia, serif", fontSize: big ? 30 : 24, fontWeight: 700, color: big ? COLORS.green : COLORS.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+    </div>
+  );
+}
+
+function App() {
+  const [data, setData] = useState({});
+  const [status, setStatus] = useState(configured ? "connecting" : "unconfigured");
+  const [query, setQuery] = useState("");
+  const [batch, setBatch] = useState("All");
+
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const { data: rows, error } = await supabase.from("attendance").select("*");
+    if (error) { setStatus("error"); return; }
+    const map = {};
+    (rows || []).forEach(r => { map[r.seating_id] = { checkedIn: r.checked_in, adults: r.adults, kids: r.kids }; });
+    setData(map);
+    setStatus("live");
+  }, []);
+
+  useEffect(() => {
+    if (!configured) return;
+    supabase = window.__createSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+    load();
+    const channel = supabase
+      .channel("attendance-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [load]);
+
+  const rowFor = (id) => data[id] || { checkedIn: false, adults: 0, kids: 0 };
+
+  const save = async (id, row) => {
+    setData(prev => ({ ...prev, [id]: row }));           // optimistic
+    if (!supabase) return;
+    await supabase.from("attendance").upsert({
+      seating_id: id, checked_in: row.checkedIn, adults: row.adults, kids: row.kids,
+    }, { onConflict: "seating_id" });
+  };
+
+  const toggleIn = (id) => {
+    const r = rowFor(id);
+    save(id, { ...r, checkedIn: !r.checkedIn, adults: (!r.checkedIn && r.adults === 0) ? 1 : r.adults });
+  };
+  const setField = (id, field, val) => {
+    const r = rowFor(id);
+    save(id, { ...r, checkedIn: true, [field]: val });
+  };
+
+  const present = GUESTS.filter(g => rowFor(g.id).checkedIn);
+  const totalAdults = present.reduce((s, g) => s + rowFor(g.id).adults, 0);
+  const totalKids = present.reduce((s, g) => s + rowFor(g.id).kids, 0);
+
+  const batches = ["All", ...Array.from(new Set(GUESTS.map(g => g.batch)))];
+  const q = query.trim().toLowerCase();
+  const visible = GUESTS.filter(g => {
+    if (batch !== "All" && g.batch !== batch) return false;
+    if (!q) return true;
+    return [g.id, g.author, g.book, g.batch].some(f => f.toLowerCase().includes(q));
+  });
+
+  const statusLine = {
+    unconfigured: "⚠ Add your Supabase URL and key in index.html",
+    connecting: "Connecting…",
+    live: "Live · shared with your team ✓",
+    error: "⚠ Could not reach Supabase — check keys & table",
+  }[status];
+
+  return (
+    <div style={{ maxWidth: 940, margin: "0 auto" }}>
+      <div style={{ borderBottom: `2px solid ${COLORS.ink}`, paddingBottom: 16 }}>
+        <div style={{ fontSize: 12, letterSpacing: 3, color: COLORS.gold, marginBottom: 6 }}>BOOK LAUNCH · GUEST CHECK-IN</div>
+        <h1 style={{ fontFamily: "Georgia, serif", fontSize: 34, margin: 0 }}>Event Attendance</h1>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "18px 0 20px" }}>
+        <Stat label="Guests In" value={`${present.length}/${GUESTS.length}`} />
+        <Stat label="Adults" value={totalAdults} />
+        <Stat label="Kids" value={totalKids} />
+        <Stat label="Total Heads" value={totalAdults + totalKids} big />
+        <div style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12,
+                      color: status === "error" || status === "unconfigured" ? "#B4462F" : COLORS.slate }}>
+          {statusLine}
+        </div>
+      </div>
+
+      {/* Search + batch filter */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ position: "relative" }}>
+          <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: COLORS.slate }}>⌕</span>
+          <input value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search by seating ID, author, book, or batch…"
+            style={{ width: "100%", padding: "13px 40px 13px 36px", borderRadius: 10,
+                     border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 15, outline: "none" }} />
+          {query && <button onClick={() => setQuery("")} aria-label="clear search"
+            style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                     border: "none", background: "transparent", color: COLORS.slate, cursor: "pointer", fontSize: 18 }}>×</button>}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+          {batches.map(b => (
+            <button key={b} onClick={() => setBatch(b)} style={{
+              padding: "6px 14px", borderRadius: 20, cursor: "pointer", fontSize: 13, fontWeight: 500,
+              border: `1px solid ${batch === b ? COLORS.ink : COLORS.line}`,
+              background: batch === b ? COLORS.ink : "#fff", color: batch === b ? "#fff" : COLORS.slate,
+            }}>{b}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Cards */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {visible.length === 0 && (
+          <div style={{ textAlign: "center", color: COLORS.slate, padding: "36px 0", fontSize: 15 }}>
+            No guests match “{query}”{batch !== "All" ? ` in ${batch}` : ""}.
+          </div>
+        )}
+        {visible.map(g => {
+          const r = rowFor(g.id);
+          return (
+            <div key={g.id} style={{
+              border: `1px solid ${r.checkedIn ? COLORS.green : COLORS.line}`,
+              background: r.checkedIn ? COLORS.greenSoft : "#fff",
+              borderRadius: 12, padding: "16px 18px", display: "flex", gap: 20,
+              alignItems: "center", flexWrap: "wrap",
+            }}>
+              <div style={{ flex: "1 1 260px", minWidth: 240 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                  <span style={{ fontFamily: "Georgia, serif", fontWeight: 700, fontSize: 15, color: COLORS.gold }}>{g.id}</span>
+                  <span style={{ fontSize: 17, fontWeight: 600 }}>{g.author}</span>
+                </div>
+                <div style={{ fontSize: 14, fontStyle: "italic", marginTop: 2 }}>{g.book}</div>
+                <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 2 }}>{g.batch}</div>
+              </div>
+              <button onClick={() => toggleIn(g.id)} style={{
+                padding: "10px 18px", borderRadius: 9, cursor: "pointer", fontSize: 14, fontWeight: 600,
+                border: `1.5px solid ${COLORS.green}`, minWidth: 122,
+                background: r.checkedIn ? COLORS.green : "transparent",
+                color: r.checkedIn ? "#fff" : COLORS.green,
+              }}>{r.checkedIn ? "✓ Checked In" : "Check In"}</button>
+              <Stepper label="Adults" value={r.adults} onChange={v => setField(g.id, "adults", v)} accent={COLORS.ink} />
+              <Stepper label="Kids" value={r.kids} onChange={v => setField(g.id, "kids", v)} accent={COLORS.gold} />
+            </div>
+          );
+        })}
+      </div>
+
+      <p style={{ fontSize: 12, color: COLORS.slate, marginTop: 24, lineHeight: 1.5 }}>
+        Changes sync live to everyone with this page open. Edit the GUESTS list near the top of index.html to match your event.
+      </p>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
