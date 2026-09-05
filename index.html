@@ -106,11 +106,10 @@ function App() {
     try {
       db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       load();
-      const channel = db
-        .channel("attendance-changes")
-        .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, load)
-        .subscribe();
-      return () => { db.removeChannel(channel); };
+      // Poll every 4s so the whole team stays in sync over plain HTTPS.
+      // (Simpler and more reliable at an event than a live WebSocket.)
+      const timer = setInterval(load, 4000);
+      return () => clearInterval(timer);
     } catch (e) {
       console.error(e);
       setStatus("error");
